@@ -3,19 +3,39 @@ import styled from "styled-components";
 import { useContext } from "react";
 
 import SignInButton from "../components/SignInButton";
-import RDBLogo from "../assets/RDB.png";
 import UserContext from "../contexts/UserContext";
 import { Navigate } from "react-router-dom";
 
 const Login = () => {
-  const { isLoading, isAuthenticated } = useContext(UserContext);
+  const { isLoading, isAuthenticated, user } = useContext(UserContext);
+
+  // Determine redirect path based on user type
+  const getRedirectPath = () => {
+    // Professors go to account page
+    if (user?.userType === 'professor') {
+      return '/account';
+    }
+    // All other users go to home page
+    return '/';
+  };
 
   return (
     <Container>
       <Description>
-        <Logo src={RDBLogo} alt="rdb-logo" />
-        <TitleText>Yale Research Database</TitleText>
-        <Text>
+        <div className='flex items-center'>
+          <img 
+            src="/assets/logos/paperclip.png" 
+            alt="ylabs-logo" 
+            className="mr-2 w-[3.5rem] h-[3rem] md:w-[6.33rem] md:h-[5.4rem] sm:w-[4.5rem] sm:h-[4rem] " 
+          />
+          <img 
+            src="/assets/logos/ylabs-blue.png" 
+            alt="ylabs-logo" 
+            className="w-[7rem] h-[3rem] md:w-[13.03rem] md:h-[5.4rem] sm:w-[9rem] sm:h-[4rem]" 
+          />
+        </div>
+        <TitleText className="mt-12">A Yale Research Database</TitleText>
+        <Text className="mt-2">
           Search through 1400+ Yale faculty listings across 60+ fields of study. Learn about professors who share your research interests and find potential research mentors.
         </Text>
       </Description>
@@ -23,11 +43,9 @@ const Login = () => {
         {isLoading ? (
           <PulseLoader color="#66CCFF" size={10} />
         ) : isAuthenticated ? (
-          <Navigate to="/" />
+          <Navigate to={getRedirectPath()} replace />
         ) : (
-          <>
-            <SignInButton />
-          </>
+          <SignInButton />
         )}
       </AuthContainer>
     </Container>
@@ -35,44 +53,83 @@ const Login = () => {
 };
 
 const Container = styled.div`
-  width: 100vw;
+  width: 100%;
   background: #ffffff;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 5%;
+  padding: 5% 20px;
+  box-sizing: border-box;
 `;
 
 const Description = styled.div`
-  width: 600px;
-  margin-top: 100px;
+  width: 100%;
+  max-width: 600px;
+  margin-top: 120px;
   display: flex;
   align-items: center;
   flex-direction: column;
   justify-content: top;
   text-align: center;
+  
+  @media (max-width: 768px) {
+    padding: 0 15px;
+  }
 `;
 
 const Logo = styled.img`
   width: 320px;
-  height: 150px;
+  height: auto;
+  max-width: 90%;
+  
+  @media (max-width: 768px) {
+    width: 250px;
+  }
+  
+  @media (max-width: 480px) {
+    width: 200px;
+  }
 `;
 
 const TitleText = styled.h1`
   color: #000000;
+  font-size: 32px;
+  
+  @media (max-width: 768px) {
+    font-size: 28px;
+    margin-top: 20px !important;
+  }
+  
+  @media (max-width: 480px) {
+    font-size: 24px;
+  }
 `;
 
 const Text = styled.p`
   color: #000000;
   font-size: 20px;
+  
+  @media (max-width: 768px) {
+    font-size: 18px;
+  }
+  
+  @media (max-width: 480px) {
+    font-size: 16px;
+  }
 `;
 
 const AuthContainer = styled.div`
   margin-top: 30px;
-  width: 600px;
+  width: 100%;
+  max-width: 600px;
+  display: flex;
   align-items: center;
   flex-direction: column;
   text-align: center;
+  
+  @media (max-width: 768px) {
+    margin-top: 20px;
+  }
 `;
 
 export default Login;

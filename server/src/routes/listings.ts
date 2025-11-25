@@ -1,58 +1,34 @@
-import express from 'express';
-import { Listing } from '../models';
-import { Request, Response, Router } from "express";
+import { Router } from "express";
+import { isAuthenticated, canCreateListing, validateObjectId, validatePagination } from '../middleware';
+import * as listingController from '../controllers/listingController';
 
 const router = Router();
 
-// Route for getting listing by id: for testing
-router.get('/byId/:id', async (request: Request, response: Response) => {
-  try {
-    const { id } = request.params;
+// Search listings
+router.get('/search', isAuthenticated, validatePagination, listingController.searchListings);
 
-    const listing = await Listing.findById(id);
+// Create listing
+router.post("/", isAuthenticated, canCreateListing, listingController.createListingForCurrentUser);
 
-    return response.status(200).json(listing);
-  } catch (error) {
-    console.log(error.message);
-    response.status(500).send({ message: error.message });
-  }
-});
+// Get skeleton listing
+router.get('/skeleton', isAuthenticated, listingController.getSkeletonListingForCurrentUser);
 
-/* Route for getting relevant listings based on the queries fname, lname, and dept (all optional, at least one of the 3 must be provided)
-fname: fname must be a substring of prof's first name for the corresponding listing to be included
-lname: lname must be a substring of prof's last name for the corresponding listing to be included
-dept: dept must contain a department mentioned in the listing for the corresponding listing to be included
-*/
-router.get('/', async (request: Request, response: Response) => {
-  try {
-    const fname = request.query.fname === undefined ? '' : request.query.fname;
-    const lname = request.query.lname === undefined ? '' : request.query.lname;
-    const keywords = request.query.keywords === undefined ? '' :  (request.query.keywords as String).replace(',', ' ').replace('  ', ' ');
-    const dept = request.query.dept === undefined || request.query.dept === '' ? [] : (request.query.dept as String).split(',');
+// Read specific listing
+router.get('/:id', isAuthenticated, validateObjectId('id'), listingController.getListingById);
 
-    if(fname === '' && lname === '' && dept.length == 0 && keywords.length == 0){
-      throw new Error('At least 1 query must be provided');
-    } 
+// Update listing
+router.put('/:id', isAuthenticated, validateObjectId('id'), listingController.updateListingForCurrentUser);
 
-    let query = { "fname": { "$regex": fname, "$options": "i" }, 
-                  "lname": { "$regex": lname, "$options": "i" },
-                  "departments": { "$elemMatch": { "$in": dept } },
-                  "$text": { "$search": keywords, "$caseSensitive": false }};
+// Archive listing
+router.put('/:id/archive', isAuthenticated, validateObjectId('id'), listingController.archiveListingForCurrentUser);
 
-    if(dept.length === 0){
-      delete query["departments"];
-    }
-    if(keywords == ''){
-      delete query["$text"];
-    }
-    
-    const listings = await Listing.find(query);
-    return response.status(200).json(listings);
+// Unarchive listing
+router.put('/:id/unarchive', isAuthenticated, validateObjectId('id'), listingController.unarchiveListingForCurrentUser);
 
-  } catch (error) {
-    console.log(error.message);
-    response.status(500).send({ message: error.message });
-  }
-});
+// Add view to listing
+router.put('/:id/addView', isAuthenticated, validateObjectId('id'), listingController.addViewToListing);
+
+// Delete listing
+router.delete('/:id', isAuthenticated, validateObjectId('id'), listingController.deleteListingForCurrentUser);
 
 export default router;
