@@ -3,7 +3,7 @@ import swal from "sweetalert";
 
 import axios from "../utils/axios";
 import UserContext from "../contexts/UserContext";
-import { User } from "../types";
+import { User } from "../types/types";
 
 const UserContextProvider: FC = ({ children }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -11,8 +11,9 @@ const UserContextProvider: FC = ({ children }) => {
   const [user, setUser] = useState<User>();
 
   const checkContext = useCallback(() => {
+    setIsLoading(true);
     axios
-      .get<{ auth: boolean; user?: User }>("/check")
+      .get<{ auth: boolean; user?: User }>("/check", {withCredentials: true})
       .then(({ data }) => {
         if (data.auth) {
           setIsAuthenticated(true);
@@ -21,14 +22,19 @@ const UserContextProvider: FC = ({ children }) => {
           setIsAuthenticated(false);
           setUser(undefined);
         }
+        setIsLoading(false);
       })
-      .catch(() =>
+      .catch((error) => {
+        console.error("Auth check failed:", error);
+        setIsAuthenticated(false);
+        setUser(undefined);
+        setIsLoading(false);
+        
         swal({
-          text: "Something went wrong while trying to fetch your auth status.",
+          text: "Something went wrong while checking authentication status.",
           icon: "warning",
-        })
-      );
-    setIsLoading(false);
+        });
+      });
   }, []);
 
   useEffect(() => {
