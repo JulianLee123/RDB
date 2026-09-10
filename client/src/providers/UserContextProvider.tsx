@@ -1,34 +1,44 @@
-import { FC, useCallback, useEffect, useState } from "react";
-import swal from "sweetalert";
+/**
+ * Provider component managing user authentication and session state.
+ */
+import { PropsWithChildren, useCallback, useEffect, useReducer } from 'react';
 
-import axios from "../utils/axios";
-import UserContext from "../contexts/UserContext";
-import { User } from "../types";
+import axios from '../utils/axios';
+import UserContext from '../contexts/UserContext';
+import { User } from '../types/types';
+import { createInitialUserState, userReducer } from '../reducers/userReducer';
+import { setResearchAnalyticsEnabled } from '../utils/researchAnalytics';
 
-const UserContextProvider: FC = ({ children }) => {
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [user, setUser] = useState<User>();
+const UserContextProvider = ({ children }: PropsWithChildren) => {
+  const [state, dispatch] = useReducer(userReducer, undefined, createInitialUserState);
+  const { isLoading, isAuthenticated, user, authError } = state;
 
   const checkContext = useCallback(() => {
+    dispatch({ type: 'FETCH_START' });
     axios
-      .get<{ auth: boolean; user?: User }>("/check")
+      .get<{ auth: boolean; user?: User }>('/check', { withCredentials: true })
       .then(({ data }) => {
+        setResearchAnalyticsEnabled(data.auth === true);
         if (data.auth) {
-          setIsAuthenticated(true);
-          setUser(data.user);
+          dispatch({
+            type: 'FETCH_SUCCESS',
+            payload: { isAuthenticated: true, user: data.user },
+          });
         } else {
-          setIsAuthenticated(false);
-          setUser(undefined);
+          dispatch({
+            type: 'FETCH_SUCCESS',
+            payload: { isAuthenticated: false },
+          });
         }
       })
-      .catch(() =>
-        swal({
-          text: "Something went wrong while trying to fetch your auth status.",
-          icon: "warning",
-        })
-      );
-    setIsLoading(false);
+      .catch(() => {
+        console.error('Auth check failed.');
+        setResearchAnalyticsEnabled(false);
+        dispatch({
+          type: 'FETCH_FAILURE',
+          error: 'Unable to reach y/labs right now. Please try again in a moment.',
+        });
+      });
   }, []);
 
   useEffect(() => {
@@ -36,9 +46,7 @@ const UserContextProvider: FC = ({ children }) => {
   }, [checkContext]);
 
   return (
-    <UserContext.Provider
-      value={{ isLoading, isAuthenticated, user, checkContext }}
-    >
+    <UserContext.Provider value={{ isLoading, isAuthenticated, user, authError, checkContext }}>
       {children}
     </UserContext.Provider>
   );

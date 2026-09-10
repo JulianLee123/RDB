@@ -1,112 +1,122 @@
-export const departmentNames = [
-  "African American Studies",
-  "African Studies",
-  "American Studies",
-  "Anesthesiology",
-  "Anthropology",
-  "Applied Mathematics",
-  "Applied Physics",
-  "Archaeological Studies",
-  "Architecture",
-  "Art",
-  "Astronomy",
-  "Biological and Biomedical Sciences",
-  "Biomedical Engineering",
-  "Biostatistics",
-  "Cell Biology",
-  "Cellular and Molecular Physiology",
-  "Chemical and Environmental Engineering",
-  "Chemistry",
-  "Child Study Center",
-  "Chronic Disease Epidemiology",
-  "Classics",
-  "Cognitive Science",
-  "Comparative Literature",
-  "Comparative Medicine",
-  "Computational Biology and Bioinformatics",
-  "Computer Science",
-  "Dermatology",
-  "Early Modern Studies",
-  "Earth and Planetary Sciences",
-  "East Asian Languages and Literatures",
-  "East Asian Studies",
-  "Ecology and Evolutionary Biology",
-  "Economics",
-  "Electrical Engineering",
-  "Emergency Medicine",
-  "Engineering and Applied Science",
-  "English",
-  "Environmental Health Sciences",
-  "Environmental Studies",
-  "Epidemiology of Microbial Diseases",
-  "Ethics, Politics and Economics",
-  "Ethnicity, Race and Migration",
-  "European and Russian Studies",
-  "Experimental Pathology",
-  "Film and Media Studies",
-  "Forestry and Environmental Studies",
-  "French",
-  "Genetics",
-  "Geology and Geophysics",
-  "German",
-  "Global Affairs",
-  "Health Care Management",
-  "Health Policy and Management",
-  "Hellenic Studies",
-  "History",
-  "History of Art",
-  "History of Medicine",
-  "History of Science and Medicine",
-  "Humanities",
-  "Immunobiology",
-  "Internal Medicine",
-  "International and Development Economics",
-  "Investigative Medicine",
-  "Italian",
-  "Judaic Studies",
-  "Laboratory Medicine",
-  "Latin American Studies",
-  "Law",
-  "Linguistics",
-  "MCDB",
-  "Management",
-  "Mathematics",
-  "Mechanical Engineering and Materials Science",
-  "Medicine",
-  "Medieval Studies",
-  "Microbial Pathogenesis",
-  "Microbiology",
-  "Modern Middle East Studies",
-  "Molecular Biophysics and Biochemistry",
-  "Molecular, Cellular and Developmental Biology",
-  "Music",
-  "Near Eastern Langauges and Civilizations",
-  "Neurology",
-  "Neuroscience",
-  "Neurosurgery",
-  "Nursing",
-  "Obstetrics, Gynecology and Reproductive Sciences",
-  "Ophthalmology and Visual Science",
-  "Orthopaedics and Rehabilitation",
-  "Pathology",
-  "Pediatrics",
-  "Pharmacology",
-  "Philosophy",
-  "Physics",
-  "Political Science",
-  "Psychiatry",
-  "Psychology",
-  "Public Health",
-  "Radiology and Biomedical Imaging",
-  "Religious Studies",
-  "Slavic Languages and Literatures",
-  "Sociology",
-  "South Asian Studies",
-  "Spanish and Portuguese",
-  "Statistics",
-  "Surgery",
-  "Theater Studies",
-  "Therapeutic Radiology",
-  "Urology",
-  "Women’s, Gender, and Sexuality Studies",
-];
+/**
+ * Department name parsing and abbreviation utilities.
+ */
+
+const PREFIXED_DEPARTMENT_PATTERN = /^([A-Za-z&/]+)\s+-\s+(.+)$/;
+
+export interface DepartmentNameRecord {
+  abbreviation?: string;
+  name?: string;
+  displayName?: string;
+  aliases?: string[];
+}
+
+interface DepartmentLabelOptions {
+  preferDisplayName?: boolean;
+}
+
+/**
+ * Extract abbreviation from a department string.
+ * Handles "ABBR - Name" format or returns first 4 chars uppercase.
+ */
+export const getDepartmentAbbreviation = (department: string): string => {
+  const match = department.match(PREFIXED_DEPARTMENT_PATTERN);
+  if (match) {
+    return match[1].toUpperCase();
+  }
+
+  return department
+    .replace(/[^a-zA-Z]/g, '')
+    .substring(0, 4)
+    .toUpperCase();
+};
+
+export const getDepartmentDisplayLabel = (department: string): string => {
+  const value = department.trim();
+  const match = value.match(PREFIXED_DEPARTMENT_PATTERN);
+  return match ? match[2].trim() : value;
+};
+
+const normalizeDepartmentLabel = (department: string): string =>
+  getDepartmentDisplayLabel(department)
+    .toLowerCase()
+    .replace(/[&]/g, 'and')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const buildDepartmentLabelMap = (
+  departmentTable: DepartmentNameRecord[] | undefined,
+  options: DepartmentLabelOptions = {},
+): Map<string, string> => {
+  const map = new Map<string, string>();
+
+  for (const row of departmentTable || []) {
+    const canonical = (
+      (options.preferDisplayName ? row.displayName : '') ||
+      row.name ||
+      (row.displayName ? getDepartmentDisplayLabel(row.displayName) : '') ||
+      ''
+    ).trim();
+    if (!canonical) continue;
+    const values = [
+      row.abbreviation,
+      row.name,
+      row.displayName,
+      row.displayName ? getDepartmentDisplayLabel(row.displayName) : undefined,
+      ...(row.aliases || []),
+    ];
+
+    for (const value of values) {
+      if (!value) continue;
+      const key = normalizeDepartmentLabel(value);
+      if (key) map.set(key, canonical);
+    }
+  }
+
+  return map;
+};
+
+const MAX_DEPARTMENT_SLUG_LENGTH = 120;
+
+/**
+ * Slug form of a department's normalized label, matching the server
+ * `toDepartmentSlug` so a `/research/department/<slug>` link resolves to the
+ * same canonical page the browse facet buckets under.
+ */
+export const getDepartmentSlug = (department: string): string =>
+  normalizeDepartmentLabel(department)
+    .replace(/\s+/g, '-')
+    .slice(0, MAX_DEPARTMENT_SLUG_LENGTH)
+    .replace(/^-+|-+$/g, '');
+
+export const getDepartmentCanonicalLabel = (
+  department: string,
+  departmentTable?: DepartmentNameRecord[],
+  options?: DepartmentLabelOptions,
+): string => {
+  const labelMap = buildDepartmentLabelMap(departmentTable, options);
+  const fallback = getDepartmentDisplayLabel(department);
+  return labelMap.get(normalizeDepartmentLabel(department)) || fallback;
+};
+
+export const getUniqueDepartmentLabels = (
+  departments: string[] | undefined,
+  departmentTable?: DepartmentNameRecord[],
+  options?: DepartmentLabelOptions,
+): string[] => {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  const labelMap = buildDepartmentLabelMap(departmentTable, options);
+
+  for (const department of departments || []) {
+    const fallback = getDepartmentDisplayLabel(department);
+    const label = labelMap.get(normalizeDepartmentLabel(department)) || fallback;
+    if (!label) continue;
+    const key = normalizeDepartmentLabel(label);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    labels.push(label);
+  }
+
+  return labels;
+};

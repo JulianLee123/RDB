@@ -1,0 +1,907 @@
+/**
+ * Programs & Fellowships browse page with search, local quick filters,
+ * application-cycle empty states, and grid/list view.
+ */
+import { useReducer, useEffect, useContext, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import FellowshipModal from '../components/fellowship/FellowshipModal';
+import AdminFellowshipEditModal from '../components/admin/AdminFellowshipEditModal';
+import FellowshipSearchContext from '../contexts/FellowshipSearchContext';
+import UserContext from '../contexts/UserContext';
+import BrowseGrid from '../components/shared/BrowseGrid';
+import FirstSaveCallout from '../components/shared/FirstSaveCallout';
+import LoadingSpinner from '../components/shared/LoadingSpinner';
+import CombinedFilterDropdown, {
+  FilterTabConfig,
+} from '../components/shared/CombinedFilterDropdown';
+import ActiveFilters, {
+  ActiveFilterChip,
+  QuickFilterDef,
+} from '../components/shared/ActiveFilters';
+import FellowshipSortDropdown from '../components/shared/FellowshipSortDropdown';
+import ViewModeToggle from '../components/shared/ViewModeToggle';
+import { BrowsableItem } from '../types/browsable';
+import { Fellowship, type StudentVisibilityTier } from '../types/types';
+import axios from '../utils/axios';
+import { browsePageReducer, createInitialBrowsePageState } from '../reducers/browsePageReducer';
+import type { FellowshipQuickFilter } from '../reducers/fellowshipSearchReducer';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import { getFellowshipCycleStatus } from '../utils/fellowshipCycle';
+import {
+  getProgramJourneyStatus,
+  programKindLabel,
+  entryModeLabel,
+  programCategoryLabel,
+  type ProgramJourneyCategory,
+  type ProgramJourneySummary,
+} from '../utils/programJourney';
+
+const FIRST_PROGRAM_SAVE_KEY = 'yale-research.firstSave.program.v1';
+
+const SectionHeader = ({
+  title,
+  count,
+  description,
+}: {
+  title: string;
+  count: number;
+  description?: string;
+}) => (
+  <div className="mb-4 mt-10 border-t border-[var(--yr-line)] pt-5 first:mt-0 first:border-t-0 first:pt-0">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h2 className="text-xl font-semibold text-slate-950">{title}</h2>
+      <span className="yr-pill yr-pill-blue min-h-0 rounded px-2.5 py-1">{count}</span>
+    </div>
+    {description && (
+      <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
+    )}
+  </div>
+);
+
+const QuickFilterEmptyState = ({
+  quickFilter,
+  nextCycleCount,
+  onViewNextCycle,
+  onClearFilter,
+}: {
+  quickFilter: FellowshipQuickFilter;
+  nextCycleCount: number;
+  onViewNextCycle: () => void;
+  onClearFilter: () => void;
+}) => {
+  if (quickFilter !== 'open' && quickFilter !== 'closingSoon') return null;
+
+  const copy =
+    quickFilter === 'open'
+      ? {
+          title: 'No application windows are open right now',
+          body: 'There are no current program or fellowship applications in this filtered set. Use Next Cycle to track recurring opportunities while you prepare eligibility, mentor fit, and materials.',
+        }
+      : {
+          title: 'No application windows are closing soon',
+          body: 'There are no open program or fellowship deadlines due in the next 30 days. Use Next Cycle to track recurring opportunities while you prepare eligibility, mentor fit, and materials.',
+        };
+
+  return (
+    <div className="yr-card rounded-md px-6 py-10 text-center text-slate-600">
+      <h2 className="text-lg font-semibold text-slate-950">{copy.title}</h2>
+      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6">{copy.body}</p>
+      <div className="mt-5 flex flex-wrap justify-center gap-2">
+        {nextCycleCount > 0 && (
+          <button
+            type="button"
+            onClick={onViewNextCycle}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-line-brand bg-brand-soft px-4 text-sm font-semibold text-brand transition hover:bg-panel yr-focus-ring"
+          >
+            View Next Cycle
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onClearFilter}
+          className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-[var(--yr-line)] bg-[var(--yr-panel)] px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--yr-line-strong)] hover:bg-[var(--yr-panel-muted)] yr-focus-ring"
+        >
+          Clear filter
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const StatusSummary = ({ summary }: { summary: ProgramJourneySummary }) => (
+  <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-[var(--yr-line)] bg-[var(--yr-line)] sm:grid-cols-3 lg:grid-cols-6">
+    {journeySections.map((section) => (
+      <div key={section.key} className={`bg-[var(--yr-panel)] px-4 py-3 ${section.tileClassName}`}>
+        <dt className="yr-kicker text-[0.68rem]">{section.tileLabel}</dt>
+        <dd className="mt-2 flex min-h-[3rem] flex-col justify-end gap-1">
+          <span className="text-2xl font-semibold text-slate-950">{summary[section.key]}</span>
+          <span className="text-xs font-medium leading-tight text-slate-600">
+            {section.tileDetail}
+          </span>
+        </dd>
+      </div>
+    ))}
+  </dl>
+);
+
+const fellowshipQuickFilters: QuickFilterDef[] = [
+  { label: 'Open Only', value: 'open' },
+  { label: 'Closing Soon', value: 'closingSoon' },
+  { label: 'Structured', value: 'structured' },
+  { label: 'Mentor First', value: 'mentorFirst' },
+  { label: 'Next Cycle', value: 'nextCycle' },
+];
+
+const trustTierFilterOptions: Array<{ value: StudentVisibilityTier; label: string }> = [
+  { value: 'student_ready', label: 'Ready' },
+  { value: 'limited_but_safe', label: 'Limited' },
+  { value: 'operator_review', label: 'Review' },
+  { value: 'suppressed', label: 'Suppressed' },
+];
+
+const journeySections: Array<{
+  key: ProgramJourneyCategory;
+  title: string;
+  description: string;
+  tileLabel: string;
+  tileDetail: string;
+  tileClassName: string;
+}> = [
+  {
+    key: 'applyNow',
+    title: 'Apply Now',
+    description: 'Current program, internship, project, and fellowship application windows.',
+    tileLabel: 'Apply now',
+    tileDetail: 'Open application windows',
+    tileClassName: 'yr-pill-green',
+  },
+  {
+    key: 'openingSoon',
+    title: 'Opening Soon',
+    description: 'Programs and fellowships with announced future application opening dates.',
+    tileLabel: 'Opening soon',
+    tileDetail: 'Announced future openings',
+    tileClassName: 'yr-pill-blue',
+  },
+  {
+    key: 'structured',
+    title: 'Structured Research Programs',
+    description:
+      'Programs, internships, RA routes, and mentor-matching experiences that organize research participation.',
+    tileLabel: 'Structured programs',
+    tileDetail: 'Programs, internships, RA routes',
+    tileClassName: '',
+  },
+  {
+    key: 'fundingAfterMentor',
+    title: 'Funding After You Have a Mentor',
+    description:
+      'Funding records that usually require a research home, adviser, proposal, or lab fit first.',
+    tileLabel: 'Funding after mentor',
+    tileDetail: 'Need a mentor or plan first',
+    tileClassName: '',
+  },
+  {
+    key: 'nextCycle',
+    title: 'Plan Next Cycle',
+    description:
+      'Official past cycles that look recurring. Track these while preparing eligibility and mentor fit.',
+    tileLabel: 'Plan next cycle',
+    tileDetail: 'Recurring past cycles to track',
+    tileClassName: '',
+  },
+  {
+    key: 'archive',
+    title: 'Archive / Review',
+    description:
+      'Retained records that need eligibility review or should not be treated as active undergraduate options.',
+    tileLabel: 'Archive / review',
+    tileDetail: 'Needs review; not active',
+    tileClassName: '',
+  },
+];
+
+const dateValue = (value?: string | null) => {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
+};
+
+const sortFellowshipsForDisplay = (
+  fellowships: Fellowship[],
+  sortBy: string,
+  sortDirection: 'asc' | 'desc',
+): Fellowship[] => {
+  const sorted = [...fellowships];
+  const direction = sortDirection === 'asc' ? 1 : -1;
+
+  if (sortBy === 'deadline') {
+    return sorted.sort((a, b) => {
+      const da = dateValue(a.deadline);
+      const db = dateValue(b.deadline);
+      if (da === null && db === null) return 0;
+      if (da === null) return 1;
+      if (db === null) return -1;
+      return (da - db) * direction;
+    });
+  }
+
+  if (sortBy === 'title') {
+    return sorted.sort((a, b) => a.title.localeCompare(b.title) * direction);
+  }
+
+  return sorted;
+};
+
+const Fellowships = () => {
+  useDocumentTitle('Programs & Fellowships');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkHandledRef = useRef(false);
+  const {
+    queryString,
+    fellowships,
+    isLoading,
+    setQueryString,
+    filterOptions,
+    selectedProgramCategory,
+    setSelectedProgramCategory,
+    selectedProgramKind,
+    setSelectedProgramKind,
+    selectedEntryMode,
+    setSelectedEntryMode,
+    selectedStudentFacingCategory,
+    setSelectedStudentFacingCategory,
+    selectedYearOfStudy,
+    setSelectedYearOfStudy,
+    selectedTermOfAward,
+    setSelectedTermOfAward,
+    selectedPurpose,
+    setSelectedPurpose,
+    selectedSubjects = [],
+    setSelectedSubjects = () => {},
+    selectedRegions,
+    setSelectedRegions,
+    selectedCitizenship,
+    setSelectedCitizenship,
+    selectedStudentVisibilityTier,
+    setSelectedStudentVisibilityTier,
+    sortBy,
+    sortDirection,
+    quickFilter,
+    setQuickFilter,
+    refreshFellowships,
+    setPage,
+    searchExhausted,
+    total,
+    journeySummary,
+    setFilterBarHeight,
+  } = useContext(FellowshipSearchContext);
+
+  const { user } = useContext(UserContext);
+  const isAdmin = user?.isAdmin ?? false;
+
+  const [state, dispatch] = useReducer(
+    browsePageReducer<Fellowship>,
+    undefined as unknown as never,
+    () => createInitialBrowsePageState<Fellowship>(),
+  );
+  const [showFirstSaveCallout, setShowFirstSaveCallout] = useState(false);
+  const {
+    favIds: favFellowshipIds,
+    selectedItem: selectedFellowship,
+    isDetailModalOpen: isModalOpen,
+    adminEditItem: adminEditFellowship,
+  } = state;
+
+  useEffect(() => {
+    setQueryString('');
+  }, [setQueryString]);
+
+  const reloadFavorites = async () => {
+    axios
+      .get('/users/watchedProgramIds')
+      .then((response) => {
+        dispatch({ type: 'SET_FAVORITES', ids: response.data.watchedProgramIds || [] });
+      })
+      .catch(() => {
+        console.error("Error fetching user's watched programs.");
+        dispatch({ type: 'SET_FAVORITES', ids: [] });
+      });
+  };
+
+  useEffect(() => {
+    reloadFavorites();
+  }, []);
+
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    deepLinkHandledRef.current = true;
+    const fellowshipId = searchParams.get('program') || searchParams.get('fellowship');
+    if (!fellowshipId) return;
+    axios
+      .get(`/programs/${fellowshipId}`)
+      .then((response) => {
+        const program = response.data?.program || response.data?.fellowship;
+        if (program) {
+          dispatch({ type: 'OPEN_DETAIL_MODAL', item: program });
+        }
+      })
+      .catch(() => {
+        console.error('Error fetching direct fellowship link.');
+        setSearchParams((params) => {
+          params.delete('program');
+          params.delete('fellowship');
+          return params;
+        });
+      });
+  }, [searchParams, setSearchParams]);
+
+  const fellowshipFilterTabs: FilterTabConfig[] = [
+    {
+      key: 'studentFacingCategory',
+      label: 'Journey',
+      options: filterOptions.studentFacingCategory,
+      selected: selectedStudentFacingCategory,
+      setSelected: setSelectedStudentFacingCategory,
+    },
+    {
+      key: 'programKind',
+      label: 'Program Kind',
+      options: filterOptions.programKind,
+      labelFn: programKindLabel,
+      selected: selectedProgramKind,
+      setSelected: setSelectedProgramKind,
+    },
+    {
+      key: 'entryMode',
+      label: 'Entry Mode',
+      options: filterOptions.entryMode,
+      labelFn: entryModeLabel,
+      selected: selectedEntryMode,
+      setSelected: setSelectedEntryMode,
+    },
+    {
+      key: 'programCategory',
+      label: 'Legacy Type',
+      options: filterOptions.programCategory,
+      labelFn: programCategoryLabel,
+      selected: selectedProgramCategory,
+      setSelected: setSelectedProgramCategory,
+    },
+    {
+      key: 'year',
+      label: 'Year',
+      options: filterOptions.yearOfStudy,
+      selected: selectedYearOfStudy,
+      setSelected: setSelectedYearOfStudy,
+    },
+    {
+      key: 'term',
+      label: 'Term',
+      options: filterOptions.termOfAward,
+      selected: selectedTermOfAward,
+      setSelected: setSelectedTermOfAward,
+    },
+    {
+      key: 'subjects',
+      label: 'Subject',
+      options: filterOptions.subjects || [],
+      selected: selectedSubjects,
+      setSelected: setSelectedSubjects,
+    },
+    {
+      key: 'purpose',
+      label: 'Purpose',
+      options: filterOptions.purpose,
+      selected: selectedPurpose,
+      setSelected: setSelectedPurpose,
+    },
+    {
+      key: 'region',
+      label: 'Region',
+      options: filterOptions.globalRegions,
+      selected: selectedRegions,
+      setSelected: setSelectedRegions,
+    },
+    {
+      key: 'citizenship',
+      label: 'Citizenship',
+      options: filterOptions.citizenshipStatus,
+      selected: selectedCitizenship,
+      setSelected: setSelectedCitizenship,
+    },
+  ];
+
+  const fellowshipFilterGroups: {
+    label: string;
+    values: string[];
+    labelFn?: (item: string) => string;
+    clear: () => void;
+  }[] = [
+    {
+      label: 'Journey',
+      values: selectedStudentFacingCategory,
+      clear: () => setSelectedStudentFacingCategory([]),
+    },
+    {
+      label: 'Program Kind',
+      values: selectedProgramKind,
+      labelFn: programKindLabel,
+      clear: () => setSelectedProgramKind([]),
+    },
+    {
+      label: 'Entry Mode',
+      values: selectedEntryMode,
+      labelFn: entryModeLabel,
+      clear: () => setSelectedEntryMode([]),
+    },
+    {
+      label: 'Legacy Type',
+      values: selectedProgramCategory,
+      labelFn: programCategoryLabel,
+      clear: () => setSelectedProgramCategory([]),
+    },
+    { label: 'Year', values: selectedYearOfStudy, clear: () => setSelectedYearOfStudy([]) },
+    { label: 'Term', values: selectedTermOfAward, clear: () => setSelectedTermOfAward([]) },
+    { label: 'Purpose', values: selectedPurpose, clear: () => setSelectedPurpose([]) },
+    { label: 'Subject', values: selectedSubjects, clear: () => setSelectedSubjects([]) },
+    { label: 'Region', values: selectedRegions, clear: () => setSelectedRegions([]) },
+    { label: 'Citizenship', values: selectedCitizenship, clear: () => setSelectedCitizenship([]) },
+  ].filter((g) => g.values.length > 0);
+
+  const fellowshipChips: ActiveFilterChip[] = fellowshipFilterGroups.map((group) => {
+    const displayValues = group.labelFn ? group.values.map(group.labelFn) : group.values;
+    const display =
+      displayValues.length <= 3
+        ? displayValues.join(', ')
+        : `${displayValues.slice(0, 2).join(', ')} +${displayValues.length - 2} more`;
+    return {
+      key: `f-${group.label}`,
+      label: `${group.label}: ${display}`,
+      colorClass: 'bg-[var(--yr-panel-muted)] text-gray-700 border border-[var(--yr-line-strong)]',
+      onRemove: group.clear,
+    };
+  });
+
+  const { closingSoon, open, journeyGroups } = useMemo(() => {
+    const now = new Date();
+    const cycleGroups = {
+      closingSoon: [] as Fellowship[],
+      open: [] as Fellowship[],
+      openingSoon: [] as Fellowship[],
+      projectedNextCycle: [] as Fellowship[],
+      nextCycle: [] as Fellowship[],
+      closed: [] as Fellowship[],
+    };
+    const groups: Record<ProgramJourneyCategory, Fellowship[]> = {
+      applyNow: [],
+      openingSoon: [],
+      structured: [],
+      fundingAfterMentor: [],
+      nextCycle: [],
+      archive: [],
+    };
+    for (const f of fellowships) {
+      const cycleCat = getFellowshipCycleStatus(f, now).category;
+      cycleGroups[cycleCat].push(f);
+      groups[getProgramJourneyStatus(f, now).category].push(f);
+    }
+    cycleGroups.closingSoon.sort((a, b) => {
+      const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+      const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+      return da - db;
+    });
+    if (sortBy !== 'default') {
+      cycleGroups.closingSoon = sortFellowshipsForDisplay(
+        cycleGroups.closingSoon,
+        sortBy,
+        sortDirection,
+      );
+      cycleGroups.open = sortFellowshipsForDisplay(cycleGroups.open, sortBy, sortDirection);
+      cycleGroups.openingSoon = sortFellowshipsForDisplay(
+        cycleGroups.openingSoon,
+        sortBy,
+        sortDirection,
+      );
+      cycleGroups.projectedNextCycle = sortFellowshipsForDisplay(
+        cycleGroups.projectedNextCycle,
+        sortBy,
+        sortDirection,
+      );
+      cycleGroups.nextCycle = sortFellowshipsForDisplay(
+        cycleGroups.nextCycle,
+        sortBy,
+        sortDirection,
+      );
+      cycleGroups.closed = sortFellowshipsForDisplay(cycleGroups.closed, sortBy, sortDirection);
+      for (const key of Object.keys(groups) as ProgramJourneyCategory[]) {
+        groups[key] = sortFellowshipsForDisplay(groups[key], sortBy, sortDirection);
+      }
+    } else {
+      for (const key of Object.keys(groups) as ProgramJourneyCategory[]) {
+        groups[key].sort((a, b) => {
+          const da = dateValue(a.deadline) ?? Number.MAX_SAFE_INTEGER;
+          const db = dateValue(b.deadline) ?? Number.MAX_SAFE_INTEGER;
+          return da - db;
+        });
+      }
+    }
+    return { ...cycleGroups, journeyGroups: groups };
+  }, [fellowships, sortBy, sortDirection]);
+
+  const toBrowsable = (fs: Fellowship[]): BrowsableItem[] =>
+    fs.map((f) => ({ type: 'fellowship' as const, data: f }));
+
+  const journeyItems = useMemo(() => {
+    const byKey = {} as Record<ProgramJourneyCategory, BrowsableItem[]>;
+    for (const key of Object.keys(journeyGroups) as ProgramJourneyCategory[]) {
+      let rows = journeyGroups[key];
+      if (quickFilter === 'open') {
+        rows = rows.filter((f) =>
+          ['open', 'closingSoon'].includes(getFellowshipCycleStatus(f).category),
+        );
+      }
+      if (quickFilter === 'closingSoon') {
+        rows = rows.filter((f) => getFellowshipCycleStatus(f).category === 'closingSoon');
+      }
+      if (quickFilter === 'structured') {
+        rows = rows.filter((f) =>
+          ['STRUCTURED_PROGRAM', 'CENTER_INTERNSHIP', 'RA_PROGRAM', 'MENTOR_MATCHING'].includes(
+            f.programKind,
+          ),
+        );
+      }
+      if (quickFilter === 'mentorFirst') {
+        rows = rows.filter((f) => f.requiresMentorBeforeApply);
+      }
+      byKey[key] = toBrowsable(rows);
+    }
+    return byKey;
+  }, [journeyGroups, quickFilter]);
+
+  const showSection = (section: ProgramJourneyCategory) => {
+    if (quickFilter === null) return true;
+    if (quickFilter === 'open') return section === 'applyNow';
+    if (quickFilter === 'closingSoon') return section === 'applyNow';
+    if (quickFilter === 'nextCycle') return section === 'nextCycle';
+    if (quickFilter === 'structured') return section === 'structured';
+    if (quickFilter === 'mentorFirst')
+      return section === 'fundingAfterMentor' || section === 'applyNow';
+    return false;
+  };
+
+  const updateFavorite = (fellowshipId: string, favorite: boolean) => {
+    const prevFavIds = favFellowshipIds;
+
+    if (favorite) {
+      dispatch({ type: 'SET_FAVORITES', ids: [fellowshipId, ...prevFavIds] });
+      if (!localStorage.getItem(FIRST_PROGRAM_SAVE_KEY)) {
+        localStorage.setItem(FIRST_PROGRAM_SAVE_KEY, 'true');
+        setShowFirstSaveCallout(true);
+      }
+      axios
+        .put('/users/watchedPrograms', { data: { watchedPrograms: [fellowshipId] } })
+        .catch(() => {
+          dispatch({ type: 'SET_FAVORITES', ids: prevFavIds });
+          console.error('Error watching program.');
+        });
+    } else {
+      dispatch({ type: 'SET_FAVORITES', ids: prevFavIds.filter((id) => id !== fellowshipId) });
+      axios
+        .delete('/users/watchedPrograms', { data: { watchedPrograms: [fellowshipId] } })
+        .catch(() => {
+          dispatch({ type: 'SET_FAVORITES', ids: prevFavIds });
+          console.error('Error unwatching program.');
+        });
+    }
+  };
+
+  const handleToggleFavorite = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    updateFavorite(id, !favFellowshipIds.includes(id));
+  };
+
+  const handleOpenModal = (item: BrowsableItem) => {
+    if (item.type === 'fellowship') {
+      dispatch({ type: 'OPEN_DETAIL_MODAL', item: item.data });
+      setSearchParams((params) => {
+        params.delete('fellowship');
+        params.set('program', item.data.id);
+        return params;
+      });
+    }
+  };
+
+  const handleAdminEdit = (item: BrowsableItem) => {
+    if (item.type === 'fellowship') {
+      dispatch({ type: 'OPEN_ADMIN_EDIT', item: item.data });
+    }
+  };
+
+  const noResults = fellowships.length === 0 && !isLoading;
+  const toggleTrustTierFilter = (tier: StudentVisibilityTier) => {
+    setSelectedStudentVisibilityTier((current) =>
+      current.includes(tier) ? current.filter((value) => value !== tier) : [...current, tier],
+    );
+  };
+  const activeResultCount = journeySections.reduce(
+    (count, section) =>
+      showSection(section.key) ? count + journeyItems[section.key].length : count,
+    0,
+  );
+  const resultCounterCount = quickFilter ? activeResultCount : total;
+  const sectionCount = (key: ProgramJourneyCategory): number =>
+    quickFilter ? journeyItems[key].length : journeySummary[key];
+  const showQuickFilterEmptyState =
+    !isLoading &&
+    searchExhausted &&
+    activeResultCount === 0 &&
+    (quickFilter === 'open' || quickFilter === 'closingSoon') &&
+    fellowships.length > 0;
+  const hasActiveStructuredFilter =
+    selectedProgramCategory.length > 0 ||
+    selectedProgramKind.length > 0 ||
+    selectedEntryMode.length > 0 ||
+    selectedStudentFacingCategory.length > 0 ||
+    selectedYearOfStudy.length > 0 ||
+    selectedTermOfAward.length > 0 ||
+    selectedPurpose.length > 0 ||
+    selectedSubjects.length > 0 ||
+    selectedRegions.length > 0 ||
+    selectedCitizenship.length > 0 ||
+    selectedStudentVisibilityTier.length > 0;
+  const showNoLiveWindowsNotice =
+    !isLoading &&
+    searchExhausted &&
+    !quickFilter &&
+    !queryString.trim() &&
+    !hasActiveStructuredFilter &&
+    fellowships.length > 0 &&
+    open.length === 0 &&
+    closingSoon.length === 0;
+
+  const sentinelRef = useInfiniteScroll({
+    searchExhausted,
+    isLoading,
+    setPage,
+    filteredCount: activeResultCount,
+    totalRawCount: fellowships.length,
+    quickFilterActive: !!quickFilter,
+  });
+
+  const handleLoadMore = () => {
+    if (!isLoading && !searchExhausted) {
+      setPage((prev) => prev + 1);
+    }
+  };
+
+  return (
+    <div className="yr-page min-h-[calc(100vh-12rem)]">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="pt-8 pb-6">
+          <div className="grid gap-6 border-b border-[var(--yr-line)] pb-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
+            <div className="max-w-3xl">
+              <p className="yr-kicker">Program planning</p>
+              <h1 className="mt-2 text-3xl font-semibold leading-tight text-slate-950 sm:text-4xl">
+                Programs & Fellowships
+              </h1>
+              <p className="mt-3 text-base leading-7 text-slate-600">
+                Track structured applications, recurring research programs, center internships, and
+                fellowship cycles alongside your research search. Some records fund a project after
+                you find a research home; others directly organize mentor matching or summer work.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 border-l border-[var(--yr-line)] pl-0 sm:flex-row lg:flex-col lg:pl-5">
+              <Link
+                to="/dashboard?tab=programs"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-line-brand bg-brand-soft px-4 text-sm font-semibold text-brand transition hover:bg-panel yr-focus-ring"
+              >
+                Saved programs
+              </Link>
+              <a
+                href="https://yale.communityforce.com/Funds/Search.aspx#4371597136646D517975544F5976596D4E73384E69673D3D"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-[var(--yr-line)] bg-[var(--yr-panel)] px-4 text-sm font-semibold text-slate-700 transition hover:border-[var(--yr-line-strong)] hover:bg-[var(--yr-panel-muted)] yr-focus-ring"
+              >
+                All Yale fellowships
+              </a>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <StatusSummary summary={journeySummary} />
+          </div>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)] xl:items-start xl:gap-8">
+          <aside className="space-y-3 xl:sticky xl:top-6">
+            <div className="yr-panel flex flex-col gap-3 rounded-md p-3 sm:flex-row sm:flex-wrap sm:items-end xl:flex-col xl:items-stretch">
+              <div className="min-w-0 basis-full flex-1 sm:min-w-[220px]">
+                <label
+                  htmlFor="program-search"
+                  className="mb-1 block text-xs font-semibold text-slate-700"
+                >
+                  Search programs and fellowships
+                </label>
+                <input
+                  id="program-search"
+                  type="search"
+                  value={queryString}
+                  onChange={(e) => setQueryString(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Escape') {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="Try a topic, program, deadline, or funding source"
+                  className="min-h-[44px] w-full rounded-md border border-[var(--yr-line-strong)] bg-[var(--yr-panel)] px-3 text-base text-slate-700 focus:border-transparent yr-focus-ring"
+                />
+              </div>
+              <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto xl:flex-col xl:items-stretch">
+                <FellowshipSortDropdown />
+                <ViewModeToggle />
+                <CombinedFilterDropdown
+                  tabs={fellowshipFilterTabs}
+                  mobileSheet
+                  dialogLabel="Program filters"
+                />
+              </div>
+            </div>
+            <ActiveFilters
+              quickFilters={fellowshipQuickFilters}
+              activeQuickFilter={quickFilter}
+              onQuickFilterChange={(value) => setQuickFilter(value as FellowshipQuickFilter)}
+              totalCount={resultCounterCount}
+              isLoading={isLoading}
+              chips={fellowshipChips}
+              onClearAll={() => {
+                setSelectedProgramCategory([]);
+                setSelectedProgramKind([]);
+                setSelectedEntryMode([]);
+                setSelectedStudentFacingCategory([]);
+                setSelectedYearOfStudy([]);
+                setSelectedTermOfAward([]);
+                setSelectedPurpose([]);
+                setSelectedRegions([]);
+                setSelectedCitizenship([]);
+                setSelectedStudentVisibilityTier([]);
+                setQuickFilter(null);
+              }}
+              onHeightChange={setFilterBarHeight}
+            />
+            {isAdmin && (
+              <div
+                className="rounded-md border border-[var(--yr-line)] bg-[var(--yr-panel)] p-2"
+                aria-label="Trust tier filters"
+              >
+                <div className="flex flex-wrap gap-2">
+                  {trustTierFilterOptions.map((option) => {
+                    const isActive = selectedStudentVisibilityTier.includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={isActive}
+                        onClick={() => toggleTrustTierFilter(option.value)}
+                        className={`min-h-10 rounded-md border px-3 py-1.5 text-sm font-semibold transition-colors yr-focus-ring ${
+                          isActive
+                            ? 'border-slate-900 bg-slate-900 text-white'
+                            : 'border-[var(--yr-line)] bg-[var(--yr-panel)] text-slate-700 hover:bg-[var(--yr-panel-muted)]'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </aside>
+
+          <div className="min-w-0">
+            {showFirstSaveCallout && (
+              <FirstSaveCallout kind="program" onDismiss={() => setShowFirstSaveCallout(false)} />
+            )}
+
+            {isLoading && fellowships.length === 0 ? (
+              <LoadingSpinner size="lg" />
+            ) : noResults ? (
+              <div className="yr-card rounded-md px-6 py-10 text-center text-slate-600">
+                <h2 className="text-lg font-semibold text-slate-950">No program records found</h2>
+                <p className="mt-2 text-sm">
+                  Try adjusting the search or checking the official Yale program and fellowship
+                  source.
+                </p>
+              </div>
+            ) : showQuickFilterEmptyState ? (
+              <QuickFilterEmptyState
+                quickFilter={quickFilter}
+                nextCycleCount={journeyGroups.nextCycle.length}
+                onViewNextCycle={() => setQuickFilter('nextCycle')}
+                onClearFilter={() => setQuickFilter(null)}
+              />
+            ) : (
+              <>
+                {showNoLiveWindowsNotice && (
+                  <div className="mb-6 rounded-md border border-line-brand bg-brand-soft px-5 py-4">
+                    <h2 className="text-base font-semibold text-brand-navy">
+                      No programs are currently accepting applications
+                    </h2>
+                    <p className="mt-1 max-w-3xl text-sm leading-6 text-brand-navy">
+                      Every tracked program and fellowship has closed its most recent application
+                      window. Use the recurring records below to plan for the next cycle: review
+                      eligibility, line up a mentor, and prepare materials now so you are ready when
+                      applications reopen.
+                    </p>
+                  </div>
+                )}
+                {journeySections.map((section) =>
+                  showSection(section.key) && journeyItems[section.key].length > 0 ? (
+                    <div key={section.key}>
+                      <SectionHeader
+                        title={section.title}
+                        count={sectionCount(section.key)}
+                        description={section.description}
+                      />
+                      <BrowseGrid
+                        items={journeyItems[section.key]}
+                        favIds={favFellowshipIds}
+                        onToggleFavorite={handleToggleFavorite}
+                        onOpenModal={handleOpenModal}
+                        onAdminEdit={isAdmin ? handleAdminEdit : undefined}
+                        isLoading={isLoading}
+                        emptyMessage={`No ${section.title.toLowerCase()} records`}
+                        onLoadMore={handleLoadMore}
+                        disableVirtualization
+                      />
+                    </div>
+                  ) : null,
+                )}
+
+                {!searchExhausted && <div ref={sentinelRef} className="h-10 w-full mt-4" />}
+              </>
+            )}
+          </div>
+        </div>
+
+        {selectedFellowship && (
+          <FellowshipModal
+            fellowship={selectedFellowship}
+            isOpen={isModalOpen}
+            onClose={() => {
+              dispatch({ type: 'CLOSE_DETAIL_MODAL' });
+              setSearchParams((params) => {
+                params.delete('program');
+                params.delete('fellowship');
+                return params;
+              });
+            }}
+            isFavorite={favFellowshipIds.includes(selectedFellowship.id)}
+            toggleFavorite={() => {
+              updateFavorite(
+                selectedFellowship.id,
+                !favFellowshipIds.includes(selectedFellowship.id),
+              );
+            }}
+          />
+        )}
+      </div>
+
+      {adminEditFellowship && (
+        <AdminFellowshipEditModal
+          fellowship={adminEditFellowship}
+          onClose={() => dispatch({ type: 'CLOSE_ADMIN_EDIT' })}
+          onSave={() => {
+            dispatch({ type: 'CLOSE_ADMIN_EDIT' });
+            refreshFellowships();
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default Fellowships;

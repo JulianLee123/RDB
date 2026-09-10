@@ -1,0 +1,208 @@
+import { describe, it, expect } from 'vitest';
+import {
+  buildEntityWorkPlan,
+  createWorkPlannerMetrics,
+  getWorkPlannerSourcePolicy,
+  recordWorkPlannerDecision,
+  recordWorkPlannerNoIdentifier,
+  workPlannerSourcePolicies,
+} from '../workPlanner';
+
+const NOW = new Date('2026-05-03T12:00:00Z');
+const DAY = 24 * 60 * 60 * 1000;
+
+describe('buildEntityWorkPlan', () => {
+  it('defines source policies for broad or paid scraper cost control', () => {
+    expect(workPlannerSourcePolicies.map((policy) => policy.sourceName)).toEqual([
+      'lab-microsite-description-llm',
+      'lab-microsite-undergrad-llm',
+      'research-area-source-extractor',
+      'ysm-mesh-keyword',
+    ]);
+    expect(getWorkPlannerSourcePolicy('research-area-source-extractor')).toMatchObject({
+      entityType: 'researchEntity',
+      paid: false,
+      defaultRecurringCadence: 'monthly',
+    });
+    expect(getWorkPlannerSourcePolicy('research-area-source-extractor')?.targetFields).toEqual([
+      'researchAreas',
+    ]);
+    expect(getWorkPlannerSourcePolicy('lab-microsite-undergrad-llm')).toMatchObject({
+      entityType: 'researchEntity',
+      paid: true,
+      defaultRecurringCadence: 'weekly',
+    });
+    expect(getWorkPlannerSourcePolicy('lab-microsite-description-llm')).toMatchObject({
+      entityType: 'researchEntity',
+      paid: true,
+      defaultRecurringCadence: 'manual',
+    });
+    expect(getWorkPlannerSourcePolicy('lab-microsite-description-llm')?.targetFields).toEqual([
+      'fullDescription',
+      'shortDescription',
+      'researchAreas',
+      'methods',
+    ]);
+    expect(getWorkPlannerSourcePolicy('lab-microsite-undergrad-llm')?.targetFields).toEqual([
+      'lastObservedAt',
+    ]);
+    expect(getWorkPlannerSourcePolicy('student-decision-llm')).toBeUndefined();
+    expect(getWorkPlannerSourcePolicy('unknown-source')).toBeUndefined();
+    for (const sourceName of ['openalex', 'orcid', 'europe-pmc', 'pubmed', 'crossref']) {
+      expect(getWorkPlannerSourcePolicy(sourceName), sourceName).toBeUndefined();
+    }
+  });
+
+  it('plans missing fields for fetch', () => {
+    const plan = buildEntityWorkPlan({
+      entityType: 'researchEntity',
+      entityKey: 'smith-lab',
+      sourceName: 'lab-microsite-undergrad-llm',
+      targetFields: ['acceptingUndergrads', 'undergradEvidenceQuote'],
+      observations: [],
+      freshnessWindowMs: 7 * DAY,
+      now: NOW,
+    });
+
+    expect(plan.shouldFetch).toBe(true);
+    expect(plan.fields).toEqual([
+      { field: 'acceptingUndergrads', shouldFetch: true, reason: 'missing' },
+      { field: 'undergradEvidenceQuote', shouldFetch: true, reason: 'missing' },
+    ]);
+  });
+
+  it('skips fresh same-source observations', () => {
+    const plan = buildEntityWorkPlan({
+      entityType: 'user',
+      entityKey: 'abc123',
+      sourceName: 'yale-directory',
+      targetFields: ['title'],
+      observations: [
+        {
+          sourceName: 'yale-directory',
+          field: 'title',
+          observedAt: new Date('2026-05-02T12:00:00Z'),
+        },
+      ],
+      freshnessWindowMs: 7 * DAY,
+      now: NOW,
+    });
+
+    expect(plan.shouldFetch).toBe(false);
+    expect(plan.fields[0]).toEqual({
+      field: 'title',
+      shouldFetch: false,
+      reason: 'fresh',
+      lastObservedAt: '2026-05-02T12:00:00.000Z',
+    });
+  });
+
+  it('fetches stale fields and ignores superseded observations', () => {
+    const plan = buildEntityWorkPlan({
+      entityType: 'fellowship',
+      entityKey: 'F1',
+      sourceName: 'openalex',
+      targetFields: ['citedByCount'],
+      observations: [
+        {
+          sourceName: 'openalex',
+          field: 'citedByCount',
+          observedAt: new Date('2026-05-02T12:00:00Z'),
+          superseded: true,
+        },
+        {
+          sourceName: 'openalex',
+          field: 'citedByCount',
+          observedAt: new Date('2026-04-01T12:00:00Z'),
+        },
+      ],
+      freshnessWindowMs: 7 * DAY,
+      now: NOW,
+    });
+
+    expect(plan.shouldFetch).toBe(true);
+    expect(plan.fields[0]).toEqual({
+      field: 'citedByCount',
+      shouldFetch: true,
+      reason: 'stale',
+      lastObservedAt: '2026-04-01T12:00:00.000Z',
+    });
+  });
+
+  it('does not plan manually locked fields', () => {
+    const plan = buildEntityWorkPlan({
+      entityType: 'researchEntity',
+      entityKey: 'smith-lab',
+      sourceName: 'lab-microsite-undergrad-llm',
+      targetFields: ['acceptingUndergrads'],
+      manuallyLockedFields: ['acceptingUndergrads'],
+      observations: [],
+      freshnessWindowMs: 7 * DAY,
+      now: NOW,
+    });
+
+    expect(plan.shouldFetch).toBe(false);
+    expect(plan.fields[0]).toEqual({
+      field: 'acceptingUndergrads',
+      shouldFetch: false,
+      reason: 'manual-lock',
+    });
+  });
+
+  it('records shared work planner metrics for fetch and skip decisions', () => {
+    const metrics = createWorkPlannerMetrics();
+
+    recordWorkPlannerDecision(
+      metrics,
+      buildEntityWorkPlan({
+        entityType: 'researchEntity',
+        entityKey: 'smith-lab',
+        sourceName: 'lab-microsite-undergrad-llm',
+        targetFields: ['joinPageUrl'],
+        observations: [],
+        freshnessWindowMs: 7 * DAY,
+        now: NOW,
+      }),
+    );
+    recordWorkPlannerDecision(
+      metrics,
+      buildEntityWorkPlan({
+        entityType: 'researchEntity',
+        entityKey: 'jones-lab',
+        sourceName: 'lab-microsite-undergrad-llm',
+        targetFields: ['joinPageUrl'],
+        observations: [
+          {
+            sourceName: 'lab-microsite-undergrad-llm',
+            field: 'joinPageUrl',
+            observedAt: new Date('2026-05-02T12:00:00Z'),
+          },
+        ],
+        freshnessWindowMs: 7 * DAY,
+        now: NOW,
+      }),
+    );
+    recordWorkPlannerDecision(
+      metrics,
+      buildEntityWorkPlan({
+        entityType: 'researchEntity',
+        entityKey: 'locked-lab',
+        sourceName: 'lab-microsite-undergrad-llm',
+        targetFields: ['joinPageUrl'],
+        manuallyLockedFields: ['joinPageUrl'],
+        observations: [],
+        freshnessWindowMs: 7 * DAY,
+        now: NOW,
+      }),
+    );
+    recordWorkPlannerNoIdentifier(metrics);
+
+    expect(metrics).toEqual({
+      planned: 4,
+      fetched: 1,
+      skippedFresh: 1,
+      skippedManualLock: 1,
+      skippedNoIdentifier: 1,
+    });
+  });
+});

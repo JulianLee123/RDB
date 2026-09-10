@@ -1,0 +1,143 @@
+/**
+ * Shared string enums for the Yale Research access/pathway model.
+ *
+ * Keep these values stable: they are persisted in MongoDB and will eventually
+ * become search/filter facets.
+ */
+
+/**
+ * `INDIVIDUAL_RESEARCH` and `FACULTY_RESEARCH` were retired (#2219): they are
+ * duplicates of `FACULTY_RESEARCH_AREA`, nothing mints them, and every consumer
+ * already treats the set as one thing. Read paths stay tolerant of the stored
+ * values because environments not yet migrated by
+ * `research-entity:consolidate-faculty-type` still hold rows, and
+ * `derivedResearchGroupKind` returns undefined for an unrecognized type, so such
+ * a row keeps its stored `kind: 'individual'` rather than being reclassified.
+ */
+export const researchEntityTypes = [
+  'LAB',
+  'CENTER',
+  'INSTITUTE',
+  'FACULTY_RESEARCH_AREA',
+  'FACULTY_PROJECT',
+  'INITIATIVE',
+  'CORE_FACILITY',
+] as const;
+
+export type ResearchEntityType = (typeof researchEntityTypes)[number];
+
+export const postedOpportunityStatuses = ['OPEN', 'CLOSED', 'ROLLING', 'ARCHIVED'] as const;
+
+export type PostedOpportunityStatus = (typeof postedOpportunityStatuses)[number];
+
+export const accessSignalTypes = [
+  'POSTED_OPENING',
+  'RECURRING_PROGRAM',
+  'CREDIT_FORMALIZATION_POSSIBLE',
+  'COURSE_CREDIT_PATHWAY',
+  'PAST_UNDERGRADS',
+  'CURRENT_UNDERGRADS',
+  'FACULTY_SUPERVISES_STUDENT_PROJECTS',
+  'FELLOWSHIP_COMPATIBLE',
+  'REACH_OUT_PLAUSIBLE',
+  'APPLICATION_FORM_EXISTS',
+  'CONTACT_INSTRUCTIONS_EXIST',
+  'LAB_MANAGER_LISTED',
+  'PROGRAM_MANAGER_LISTED',
+  'APPLICATION_ONLY',
+  'NOT_CURRENTLY_AVAILABLE',
+  'NO_EVIDENCE',
+] as const;
+
+export type AccessSignalType = (typeof accessSignalTypes)[number];
+
+export const accessSignalConfidences = ['HIGH', 'MEDIUM', 'LOW'] as const;
+
+export type AccessSignalConfidence = (typeof accessSignalConfidences)[number];
+
+export const undergraduateLogisticsSignalTypes = [
+  'STUDENT_LEVEL',
+  'COMPENSATION',
+  'TIME_COMMITMENT',
+  'MODALITY',
+  'CURRENT_AVAILABILITY',
+] as const;
+
+export type UndergraduateLogisticsSignalType = (typeof undergraduateLogisticsSignalTypes)[number];
+
+export const signalTypes = [...accessSignalTypes, ...undergraduateLogisticsSignalTypes] as const;
+
+export type SignalType = (typeof signalTypes)[number];
+
+export const signalConfidences = accessSignalConfidences;
+
+export type SignalConfidence = AccessSignalConfidence;
+
+export const signalStatuses = ['KNOWN', 'STALE_UNDER_REVIEW', 'CONFLICTING_WITHHELD'] as const;
+
+export type SignalStatus = (typeof signalStatuses)[number];
+
+export const researchGroupKinds = [
+  'lab',
+  'center',
+  'institute',
+  'program',
+  'initiative',
+  'group',
+  'individual',
+  'solo',
+  'core_facility',
+] as const;
+
+export type ResearchGroupKind = (typeof researchGroupKinds)[number];
+
+export const ResearchGroupKindToEntityType: Record<ResearchGroupKind, ResearchEntityType> = {
+  lab: 'LAB',
+  center: 'CENTER',
+  institute: 'INSTITUTE',
+  program: 'INITIATIVE',
+  initiative: 'INITIATIVE',
+  group: 'INITIATIVE',
+  individual: 'FACULTY_RESEARCH_AREA',
+  solo: 'FACULTY_RESEARCH_AREA',
+  core_facility: 'CORE_FACILITY',
+};
+
+export const mapResearchGroupKindToEntityType = (kind?: string): ResearchEntityType => {
+  if (kind && researchGroupKinds.includes(kind as ResearchGroupKind)) {
+    return ResearchGroupKindToEntityType[kind as ResearchGroupKind];
+  }
+
+  return 'LAB';
+};
+
+export const researchEntityTypeForResearchGroupKind = mapResearchGroupKindToEntityType;
+
+export const EntityTypeToResearchGroupKind: Record<ResearchEntityType, ResearchGroupKind> = {
+  LAB: 'lab',
+  CENTER: 'center',
+  INSTITUTE: 'institute',
+  FACULTY_RESEARCH_AREA: 'individual',
+  FACULTY_PROJECT: 'individual',
+  INITIATIVE: 'initiative',
+  CORE_FACILITY: 'core_facility',
+};
+
+export const mapEntityTypeToResearchGroupKind = (entityType?: string): ResearchGroupKind => {
+  if (entityType && researchEntityTypes.includes(entityType as ResearchEntityType)) {
+    return EntityTypeToResearchGroupKind[entityType as ResearchEntityType];
+  }
+
+  return 'lab';
+};
+
+export const researchGroupKindForResearchEntityType = mapEntityTypeToResearchGroupKind;
+
+export const ResearchEntityTypes = researchEntityTypes;
+export const PostedOpportunityStatuses = postedOpportunityStatuses;
+export const AccessSignalTypes = accessSignalTypes;
+export const AccessSignalConfidences = accessSignalConfidences;
+export const SignalTypes = signalTypes;
+export const SignalConfidences = signalConfidences;
+export const SignalStatuses = signalStatuses;
+export const UndergraduateLogisticsSignalTypes = undergraduateLogisticsSignalTypes;

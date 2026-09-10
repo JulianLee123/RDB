@@ -1,0 +1,171 @@
+import { cleanup, render, waitFor } from '@testing-library/react';
+import type { FunctionComponent, ReactNode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import App from '../App';
+
+vi.mock('../components/PrivateRoute', () => ({
+  default: ({ Component }: { Component: FunctionComponent }) => <Component />,
+}));
+
+vi.mock('../components/PublicRoute', () => ({
+  default: ({ Component }: { Component: FunctionComponent }) => <Component />,
+}));
+
+vi.mock('../components/AdminRoute', () => ({
+  default: ({ Component }: { Component: FunctionComponent }) => <Component />,
+}));
+
+vi.mock('../components/UnprivateRoute', () => ({
+  default: ({ Component }: { Component: FunctionComponent }) => <Component />,
+}));
+
+vi.mock('../components/Navbar', () => ({
+  default: () => null,
+}));
+
+vi.mock('../components/Footer', () => ({
+  default: () => null,
+}));
+
+vi.mock('../components/shared/ScrollToTop', () => ({
+  default: () => null,
+}));
+
+vi.mock('../providers/ConfigContextProvider', () => ({
+  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../providers/FellowshipSearchContextProvider', () => ({
+  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../providers/UIContextProvider', () => ({
+  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('../pages/research', () => ({
+  default: () => <div data-testid="research-page">Yale Research</div>,
+}));
+
+vi.mock('../pages/fellowships', () => ({
+  default: () => <div data-testid="programs-page">Programs & Fellowships</div>,
+}));
+vi.mock('../pages/labDetail', () => ({ default: () => null }));
+vi.mock('../pages/opportunityDetail', () => ({ default: () => null }));
+vi.mock('../pages/login', () => ({ default: () => null }));
+vi.mock('../pages/about', () => ({ default: () => null }));
+vi.mock('../pages/dashboard', () => ({ default: () => null }));
+vi.mock('../pages/profile', () => ({ default: () => null }));
+vi.mock('../pages/loginError', () => ({ default: () => null }));
+vi.mock('../pages/analytics', () => ({
+  default: () => <div data-testid="analytics-page">Analytics</div>,
+}));
+vi.mock('../pages/notFound', () => ({
+  default: () => <div data-testid="not-found-page">Page not found</div>,
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  window.history.pushState({}, '', '/');
+});
+
+describe('App routing', () => {
+  it('opts into React Router v7 route semantics without future-flag warnings', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    render(<App />);
+
+    const futureWarnings = warnSpy.mock.calls.filter(([message]) =>
+      String(message).includes('React Router Future Flag Warning'),
+    );
+    expect(futureWarnings).toHaveLength(0);
+    warnSpy.mockRestore();
+  });
+
+  it('retires the legacy listings board route by redirecting /listings to /research', async () => {
+    window.history.pushState({}, '', '/listings');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/research');
+    });
+  });
+
+  it('renders Yale Research at /research', async () => {
+    window.history.pushState({}, '', '/research');
+
+    const { getByTestId } = render(<App />);
+
+    expect(getByTestId('research-page').textContent).toBe('Yale Research');
+  });
+
+  it('renders Programs & Fellowships at /programs', async () => {
+    window.history.pushState({}, '', '/programs');
+
+    const { getByTestId } = render(<App />);
+
+    expect(getByTestId('programs-page').textContent).toBe('Programs & Fellowships');
+  });
+
+  it('redirects retired /fellowships URLs to /programs', async () => {
+    window.history.pushState({}, '', '/fellowships');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/programs');
+    });
+  });
+
+  it('redirects the renamed /account URL to /dashboard', async () => {
+    window.history.pushState({}, '', '/account');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/dashboard');
+    });
+  });
+
+  it('does not keep the retired practical-routes URL as a product surface', async () => {
+    const retiredPath = `/${'pathways'}`;
+    window.history.pushState({}, '', retiredPath);
+
+    const { getByTestId } = render(<App />);
+
+    expect(getByTestId('not-found-page').textContent).toBe('Page not found');
+    expect(window.location.pathname).toBe(retiredPath);
+  });
+
+  it('resolves the lazily-loaded admin analytics route behind AdminRoute at /analytics', async () => {
+    window.history.pushState({}, '', '/analytics');
+
+    const { getByTestId } = render(<App />);
+
+    await waitFor(() => {
+      expect(getByTestId('analytics-page').textContent).toBe('Analytics');
+    });
+  });
+
+  it('exposes a skip-to-content link that precedes the navigation and targets the main landmark', () => {
+    window.history.pushState({}, '', '/research');
+
+    const { container, getByRole } = render(<App />);
+
+    const skipLink = getByRole('link', { name: /skip to main content/i });
+    expect(skipLink.getAttribute('href')).toBe('#main-content');
+
+    const main = container.querySelector('main');
+    expect(main?.getAttribute('id')).toBe('main-content');
+    expect(main?.getAttribute('tabindex')).toBe('-1');
+
+    const focusable = container.querySelectorAll('a[href], button, main[tabindex]');
+    expect(focusable[0]).toBe(skipLink);
+    expect(
+      skipLink.compareDocumentPosition(main as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});

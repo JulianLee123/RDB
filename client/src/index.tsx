@@ -1,21 +1,43 @@
-import React from "react";
-import ReactDOM from "react-dom";
+/**
+ * React application entry point with providers and router setup.
+ */
+import React, { Suspense } from 'react';
+import { createRoot } from 'react-dom/client';
 
-import "./index.css";
-import App from "./App";
-import reportWebVitals from "./reportWebVitals";
-import UserContextProvider from "./providers/UserContextProvider";
+import './index.css';
+import App from './App';
+import UserContextProvider from './providers/UserContextProvider';
+import ErrorBoundary from './components/ErrorBoundary';
+import { initializeErrorTracking } from './utils/errorTracking';
 
-ReactDOM.render(
+initializeErrorTracking();
+
+const AgentationToolbar = import.meta.env.DEV
+  ? React.lazy(async () => {
+      const { Agentation } = await import('agentation');
+      return { default: Agentation };
+    })
+  : null;
+
+const container = document.getElementById('root');
+
+if (!container) {
+  throw new Error('Root container missing in index.html');
+}
+
+const root = createRoot(container);
+
+root.render(
   <React.StrictMode>
-    <UserContextProvider>
-      <App />
-    </UserContextProvider>
+    <ErrorBoundary>
+      <UserContextProvider>
+        <App />
+        {AgentationToolbar ? (
+          <Suspense fallback={null}>
+            <AgentationToolbar />
+          </Suspense>
+        ) : null}
+      </UserContextProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
-  document.getElementById("root")
 );
-
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
-reportWebVitals();

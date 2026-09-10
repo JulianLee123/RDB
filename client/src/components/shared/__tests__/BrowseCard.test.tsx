@@ -1,0 +1,173 @@
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import BrowseCard from '../BrowseCard';
+import BrowseListItem from '../BrowseListItem';
+import ConfigContext, { defaultConfigContext } from '../../../contexts/ConfigContext';
+import UserContext, { defaultUserContext } from '../../../contexts/UserContext';
+import type { BrowsableItem } from '../../../types/browsable';
+import type { Fellowship } from '../../../types/types';
+
+vi.mock('../../../utils/axios', () => ({
+  default: {
+    put: vi.fn(() => Promise.resolve({ data: {} })),
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+});
+
+const fellowship: Fellowship = {
+  id: 'program-1',
+  title: 'Summer Research Fellowship',
+  programCategory: 'FELLOWSHIP',
+  programKind: 'FELLOWSHIP_FUNDING',
+  entryMode: 'SECURE_MENTOR_THEN_APPLY',
+  studentFacingCategory: 'Funding after mentor',
+  requiresMentorBeforeApply: true,
+  mentorMatching: false,
+  undergraduateOnly: true,
+  yaleCollegeOnly: true,
+  compensationSummary: '',
+  hoursPerWeek: null,
+  programDates: '',
+  bestNextStep: 'Find a mentor before applying.',
+  prepSteps: [],
+  competitionType: 'Fellowship',
+  summary: 'Funding for undergraduate research projects.',
+  description: '',
+  applicationInformation: '',
+  eligibility: '',
+  restrictionsToUseOfAward: '',
+  additionalInformation: '',
+  links: [],
+  applicationLink: '',
+  awardAmount: '',
+  isAcceptingApplications: true,
+  applicationOpenDate: null,
+  deadline: null,
+  contactName: '',
+  contactEmail: '',
+  contactPhone: '',
+  contactOffice: '',
+  yearOfStudy: [],
+  termOfAward: [],
+  purpose: [],
+  globalRegions: [],
+  citizenshipStatus: [],
+  sourceName: 'Yale',
+  sourceUrl: '',
+  sourceKey: 'test',
+  sourceFingerprint: 'test',
+  sourceLastVerifiedAt: null,
+  sourceLastChangedAt: null,
+  archived: false,
+  audited: false,
+  views: 0,
+  favorites: 0,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+
+const item: BrowsableItem = {
+  type: 'fellowship',
+  data: fellowship,
+};
+
+const renderAdmin = (children: ReactNode) =>
+  render(
+    <UserContext.Provider
+      value={{
+        ...defaultUserContext,
+        isLoading: false,
+        isAuthenticated: true,
+        user: { userType: 'admin', isAdmin: true } as any,
+      }}
+    >
+      <ConfigContext.Provider value={defaultConfigContext}>{children}</ConfigContext.Provider>
+    </UserContext.Provider>,
+  );
+
+describe('Browse admin controls', () => {
+  it('opens program card details from a semantic keyboard action', () => {
+    const onOpenModal = vi.fn();
+    renderAdmin(
+      <BrowseCard item={item} isFavorite={false} onOpenModal={onOpenModal} onAdminEdit={vi.fn()} />,
+    );
+
+    const titleAction = screen.getByRole('button', {
+      name: 'View details for Summer Research Fellowship',
+    });
+    titleAction.focus();
+    fireEvent.keyDown(titleAction, { key: 'Enter' });
+    fireEvent.click(titleAction);
+
+    expect(onOpenModal).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Admin edit' })).not.toBe(titleAction);
+  });
+
+  it('opens program card details from the primary View details action', () => {
+    const onOpenModal = vi.fn();
+    renderAdmin(
+      <BrowseCard item={item} isFavorite={false} onOpenModal={onOpenModal} onAdminEdit={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+
+    expect(onOpenModal).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps card admin edit controls large enough for touch input', () => {
+    renderAdmin(
+      <BrowseCard item={item} isFavorite={false} onOpenModal={vi.fn()} onAdminEdit={vi.fn()} />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Admin edit' });
+    expect(button.className).toContain('min-h-[44px]');
+    expect(button.className).toContain('min-w-[44px]');
+  });
+
+  it('keeps list admin edit controls large enough for touch input', () => {
+    renderAdmin(
+      <BrowseListItem item={item} isFavorite={false} onOpenModal={vi.fn()} onAdminEdit={vi.fn()} />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Admin edit' });
+    expect(button.className).toContain('min-h-[44px]');
+    expect(button.className).toContain('min-w-[44px]');
+  });
+});
+
+describe('Program card visual hierarchy', () => {
+  const withDeadline: BrowsableItem = {
+    type: 'fellowship',
+    data: { ...fellowship, id: 'program-deadline', deadline: '2999-06-01T00:00:00.000Z' },
+  };
+
+  it('renders the deadline as a prominent primary-line element', () => {
+    renderAdmin(<BrowseCard item={withDeadline} isFavorite={false} onOpenModal={vi.fn()} />);
+
+    const deadline = screen.getByText(/^Due /);
+    expect(deadline.className).toContain('text-sm');
+    expect(deadline.className).toContain('font-semibold');
+  });
+
+  it('omits the auto journey summary but keeps a curated best next step', () => {
+    renderAdmin(<BrowseCard item={item} isFavorite={false} onOpenModal={vi.fn()} />);
+
+    expect(screen.getByText(/Find a mentor before applying/)).toBeTruthy();
+  });
+
+  it('drops the next-step line when no curated best next step exists', () => {
+    const withoutNextStep: BrowsableItem = {
+      type: 'fellowship',
+      data: { ...fellowship, id: 'program-no-next', bestNextStep: '' },
+    };
+    renderAdmin(<BrowseCard item={withoutNextStep} isFavorite={false} onOpenModal={vi.fn()} />);
+
+    expect(screen.queryByText('Next:')).toBeNull();
+    expect(screen.getByText('Funding after mentor')).toBeTruthy();
+  });
+});

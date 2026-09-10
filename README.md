@@ -1,21 +1,81 @@
-# YURA Research Database
+# Yale Research
 
-The site is live [here](https://rdb.onrender.com). 
+A research-discovery app for Yale students. It helps students find research homes, source-backed access evidence, and a clear way to reach out to a specific Yale research context.
 
-### Running Locally
+**Live:** [yalelabs.io](https://yalelabs.io/) · **Repo:** [YaleComputerSociety/ylabs](https://github.com/YaleComputerSociety/ylabs)
 
-Prereqs:
-- Node v16.20 
-- Yarn 
+## Tech Stack
 
-#### For development
+| Layer           | Tech                                                                      |
+| --------------- | ------------------------------------------------------------------------- |
+| Client          | React 19, TypeScript, Vite, TailwindCSS, MUI                              |
+| Server          | Express 4, TypeScript, Passport.js (Yale CAS)                             |
+| Database        | MongoDB Atlas (Mongoose 8)                                                |
+| Search          | Meilisearch (keyword plus semantic via OpenAI embedder where appropriate) |
+| Package Manager | Yarn 4 via Corepack                                                       |
 
-Run `yarn install:all` to install relevant npm packages. To launch the client, open a terminal and run `yarn dev:client`. To launch the server, open a separate terminal and run `yarn dev:server`. The client is served on port 3000, and the REST API is run on port 4000. Go to `http://localhost:3000` in your browser to view the application.
+## Quick Start
 
-#### For testing
+```bash
+corepack enable
+yarn install:all
+```
 
-Run `yarn install:all & yarn build & yarn start`. Go to `http://localhost:3000` in your browser to view the application.
+Create `server/.env` and `client/.env` - see the [Developer Guide](DEVELOPER_GUIDE.md) for required variables.
 
-### Acknowledgements
+```bash
+# Terminal 1
+yarn dev:client
 
-Thanks @wu-json for creating a CAS authentication [demo](https://github.com/yale-swe/cas-auth-example-express/tree/main)!
+# Terminal 2
+yarn dev:server
+```
+
+Go to **http://localhost:3000**. Use `http://localhost:4000/api/dev-login` for a local session, or set `LOCAL_AUTH_BYPASS=true` in `server/.env` to inject the default `devadmin` admin user on protected API requests. Leave that flag off when testing the real CAS flow at `/api/cas`.
+
+## Product Surfaces
+
+- `/research`: Yale Research, the primary discovery surface for labs, centers, institutes, faculty projects, archives, collections projects, RA programs, and other research homes. Cards emphasize profiles, source-backed evidence, and planning context when it exists.
+- `/programs`: Programs & Fellowships, the structured application and planning surface for open cycles, closing-soon deadlines, likely next cycles, center internships, fellowships, and recurring research programs.
+- `/dashboard`: the private, read-only saved-planning workspace split into two surfaces: a Dashboard of saved research homes with notes and next steps, and a Program Watch of watched programs with deadlines, accepting status, and eligibility.
+- `/research/:slug`: research-home detail pages with source-backed evidence signals, a constant prompt to reach out and get involved, source-verified current team context when available, sources, and saved research-plan actions.
+
+The old Listings board and public Pathways page are retired. `/listings` redirects to `/research`; the standalone practical-routes and posted-opportunity URLs are gone and should resolve as not found; `/fellowships` redirects to `/programs`. New work should use `ResearchEntity`, `Signal`, and `ResearchEntityRelationship` concepts instead of recreating listing-style flows.
+
+Backend compatibility remains narrower than the client surface: `/api/fellowships` remains available only as a deprecated compatibility API with `/api/programs` as its successor.
+
+## Release Posture
+
+Beta is live testing and the release gate. Production promotion requires a recent Beta data-quality run, scraper integrity gate, semantic Research search readiness when semantic search is enabled, backup/rollback confirmation, Meilisearch sync, and smoke tests.
+Research search relevance depends on the current `researchentities` index settings, including curated student-topic aliases and short-query typo guards, so rebuild or sync Meilisearch after changing ResearchEntity source data or index settings.
+
+Scrapers run as short-lived CLI or cron jobs outside the web service process. Do not add a separate always-on scraper server unless runtime limits, queueing, or operator-triggered job requirements make cron insufficient.
+
+### Playwright environment fix (no root required)
+
+If `npx playwright` crashes with missing system libs (for example `libnspr4.so`), run Playwright through the local shim:
+
+```bash
+yarn playwright:run screenshot https://example.com /tmp/example.png
+```
+
+This command downloads the required shared libraries into `./.playwright-libs` and launches Playwright with `LD_LIBRARY_PATH` pointed to that local copy.
+
+For agent-driven browser exploration, register Playwright MCP through the same shim:
+
+```bash
+codex mcp add playwright -- <repo>/scripts/with-playwright-libs.sh npx -y @playwright/mcp@latest --output-dir <repo>/tmp/playwright-mcp
+```
+
+Use Playwright MCP for exploratory browser passes, then codify durable findings in Playwright scripts or tests such as `yarn audit:unified-research`.
+
+## Documentation
+
+See **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** for full setup instructions, architecture details, environment configuration, and contribution guidelines.
+Agents should start with **[AGENTS.md](AGENTS.md)** and the focused skills in **[skills/](skills/)**.
+See **[docs/research-model.md](docs/research-model.md)** for the current model and **[docs/research-model-refactor.md](docs/research-model-refactor.md)** for the accepted target and migration phases.
+See **[docs/scraper-deployment-runbook.md](docs/scraper-deployment-runbook.md)** for scraper rollout and cron posture.
+
+## Acknowledgements
+
+Thanks [@wu-json](https://github.com/wu-json) for creating a CAS authentication [demo](https://github.com/yale-swe/cas-auth-example-express/tree/main).

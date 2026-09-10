@@ -1,0 +1,86 @@
+import type mongoose from 'mongoose';
+import { describe, expect, it } from 'vitest';
+import { Account } from '../account';
+import { AdminGrant } from '../adminGrant';
+import { AnalyticsEvent } from '../analytics';
+import { Department } from '../department';
+import { EvidenceClaim } from '../evidenceClaim';
+import { Fellowship } from '../fellowship';
+import { Observation } from '../observation';
+import { OrgUnit } from '../orgUnit';
+import { Researcher } from '../researcher';
+import { ResearchArea } from '../researchArea';
+import { ResearchEntity } from '../researchEntity';
+import { RoleAssignment } from '../roleAssignment';
+import { Signal } from '../signal';
+import { ResearchPlan } from '../researchPlan';
+import { ReviewDecision } from '../reviewDecision';
+import { ScrapeRun } from '../scrapeRun';
+import { ScrapeSnapshot } from '../scrapeSnapshot';
+import { Source } from '../source';
+import { SourceDocument } from '../sourceDocument';
+import { TaxonomyTerm } from '../taxonomyTerm';
+
+const models: Array<[mongoose.Model<any>, string]> = [
+  [Account, 'accounts'],
+  [AdminGrant, 'admin_grants'],
+  [AnalyticsEvent, 'analytics_events'],
+  [Department, 'departments'],
+  [EvidenceClaim, 'evidence_claims'],
+  [Fellowship, 'fellowships'],
+  [Observation, 'observations'],
+  [OrgUnit, 'org_units'],
+  [Researcher, 'researchers'],
+  [ResearchArea, 'research_areas'],
+  [ResearchEntity, 'research_entities'],
+  [RoleAssignment, 'role_assignments'],
+  [Signal, 'signals'],
+  [ResearchPlan, 'research_plans'],
+  [ReviewDecision, 'review_decisions'],
+  [ScrapeRun, 'scrape_runs'],
+  [ScrapeSnapshot, 'scrape_snapshots'],
+  [Source, 'sources'],
+  [SourceDocument, 'source_documents'],
+  [TaxonomyTerm, 'taxonomy_terms'],
+];
+
+function schemaPathSegments(model: mongoose.Model<any>): string[] {
+  return Object.keys(model.schema.paths)
+    .flatMap((path) => path.split('.'))
+    .filter((segment) => segment !== '$*');
+}
+
+describe('Mongo naming conventions', () => {
+  it('uses PascalCase singular Mongoose model names', () => {
+    for (const [model] of models) {
+      expect(model.modelName).toMatch(/^[A-Z][A-Za-z0-9]*$/);
+    }
+  });
+
+  it('uses lowercase plural snake_case Mongo collection names', () => {
+    for (const [model, collectionName] of models) {
+      expect(model.collection.name).toBe(collectionName);
+      expect(collectionName).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
+      expect(collectionName.endsWith('s')).toBe(true);
+    }
+  });
+
+  it('uses PascalCase model refs', () => {
+    for (const [model] of models) {
+      model.schema.eachPath((_, schemaType) => {
+        const ref = schemaType.options?.ref;
+        if (typeof ref === 'string') {
+          expect(ref).toMatch(/^[A-Z][A-Za-z0-9]*$/);
+        }
+      });
+    }
+  });
+
+  it('avoids dollar-prefixed or dollar-containing field names', () => {
+    for (const [model] of models) {
+      for (const segment of schemaPathSegments(model)) {
+        expect(segment).not.toContain('$');
+      }
+    }
+  });
+});

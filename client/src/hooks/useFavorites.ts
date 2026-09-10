@@ -1,0 +1,135 @@
+/**
+ * Favorites state + optimistic toggle for saved collections.
+ * Keeps load/update endpoints local so the supported kinds share orchestration.
+ */
+import { useCallback, useEffect, useState, type MouseEvent } from 'react';
+import axios from '../utils/axios';
+import swal from 'sweetalert';
+import {
+  createResearchAnalyticsInteractionId,
+  trackResearchEvent,
+} from '../utils/researchAnalytics';
+
+type FavoritesKind = 'researchPlans' | 'watchedPrograms';
+
+interface Endpoints {
+  load: string;
+  responseKey: string;
+  collectionPath: string;
+  payloadKey: string;
+  warnOnLoadError: boolean;
+  warnOnMutationError: boolean;
+}
+
+const ENDPOINTS: Record<FavoritesKind, Endpoints> = {
+  researchPlans: {
+    load: '/users/savedResearchEntityIds',
+    responseKey: 'savedResearchEntityIds',
+    collectionPath: '/users/savedResearchEntities',
+    payloadKey: 'savedResearchEntities',
+    warnOnLoadError: false,
+    warnOnMutationError: true,
+  },
+  watchedPrograms: {
+    load: '/users/watchedProgramIds',
+    responseKey: 'watchedProgramIds',
+    collectionPath: '/users/watchedPrograms',
+    payloadKey: 'watchedPrograms',
+    warnOnLoadError: false,
+    warnOnMutationError: true,
+  },
+};
+
+export const useFavorites = (
+  kind: FavoritesKind,
+  { enabled = true }: { enabled?: boolean } = {},
+) => {
+  const config = ENDPOINTS[kind];
+  const [favIds, setFavIds] = useState<string[]>([]);
+
+  const reload = useCallback(async () => {
+    if (!enabled) {
+      setFavIds([]);
+      return;
+    }
+    try {
+      const res = await axios.get(config.load, { withCredentials: true });
+      setFavIds(res.data[config.responseKey] || []);
+    } catch {
+      console.error(`Error fetching user's favorite ${kind}.`);
+      setFavIds([]);
+      if (config.warnOnLoadError) {
+        swal({ text: `Could not load your favorite ${kind}`, icon: 'warning' });
+      }
+    }
+  }, [enabled, kind, config.load, config.responseKey, config.warnOnLoadError]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const setFavorite = useCallback(
+    async (id: string, favorite: boolean) => {
+      const previous = favIds;
+      setFavIds((prev) =>
+        favorite ? [id, ...prev.filter((x) => x !== id)] : prev.filter((x) => x !== id),
+      );
+      try {
+        if (favorite) {
+          await axios.put(config.collectionPath, {
+            withCredentials: true,
+            data: { [config.payloadKey]: [id] },
+          });
+        } else {
+          await axios.delete(config.collectionPath, {
+            withCredentials: true,
+            data: { [config.payloadKey]: [id] },
+          });
+        }
+        if (kind === 'researchPlans') {
+          void trackResearchEvent({
+            eventType: 'research_save',
+            entityType: 'research_entity',
+            entityId: id,
+            payload: { operation: favorite ? 'save' : 'remove', surface: 'profile' },
+            dedupeKey: createResearchAnalyticsInteractionId('save'),
+          });
+        }
+        if (kind === 'watchedPrograms') {
+          void trackResearchEvent({
+            eventType: 'research_save',
+            entityType: 'fellowship',
+            entityId: id,
+            payload: { operation: favorite ? 'save' : 'remove', surface: 'saved_plans' },
+            dedupeKey: createResearchAnalyticsInteractionId('save'),
+          });
+        }
+        return true;
+      } catch {
+        console.error(`Error ${favorite ? 'favoriting' : 'unfavoriting'} ${kind.slice(0, -1)}.`);
+        setFavIds(previous);
+        if (config.warnOnMutationError) {
+          swal({
+            text: `Unable to ${favorite ? 'favorite' : 'unfavorite'} ${kind.slice(0, -1)}`,
+            icon: 'warning',
+          });
+        }
+        await reload();
+        return false;
+      }
+    },
+    [favIds, kind, config.collectionPath, config.payloadKey, config.warnOnMutationError, reload],
+  );
+
+  const toggleFavorite = useCallback(
+    (id: string, e?: MouseEvent) => {
+      e?.stopPropagation();
+      setFavorite(id, !favIds.includes(id));
+    },
+    [favIds, setFavorite],
+  );
+
+  return { favIds, setFavorite, toggleFavorite, reloadFavorites: reload };
+};
+
+export default useFavorites;
